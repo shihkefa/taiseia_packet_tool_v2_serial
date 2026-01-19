@@ -1009,13 +1009,29 @@ for (int i = 0; i < length - 1; i++) {
                 </details>
 
                 <!-- 生成並發送 -->
-                <div style="display: flex; gap: 10px; margin-top: 20px;">
-                    <button class="btn" onclick="generateBroadcastResponse()" style="flex: 1;">
-                        🎯 生成廣播回應封包
-                    </button>
-                    <button class="btn" onclick="sendBroadcastResponse()" style="flex: 1;">
-                        📤 發送廣播回應封包
-                    </button>
+                <div style="margin-top: 20px;">
+                    <!-- 自動響應模式 -->
+                    <div style="background: #e7f3ff; padding: 12px; border-radius: 8px; border-left: 4px solid #667eea; margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="autoResponseMode" onchange="toggleAutoResponseMode()" style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer;">
+                            <div>
+                                <div style="font-weight: bold; color: #667eea;">🤖 自動響應模式</div>
+                                <div style="font-size: 0.85em; color: #6c757d; margin-top: 4px;">
+                                    開啟後將自動響應控制器的命令，並更新設備狀態<br>
+                                    修改UI設置時會自動發送廣播包通知控制器
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn" onclick="generateBroadcastResponse()" style="flex: 1;">
+                            🎯 生成廣播回應封包
+                        </button>
+                        <button class="btn" onclick="sendBroadcastResponse()" style="flex: 1;">
+                            📤 發送廣播回應封包
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 生成的封包預覽 -->
@@ -2815,6 +2831,19 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
         let isMonitorPaused = false;  // 串口監視器暫停標志
         let lastReceivedPacket = null;  // 上一個接收的封包（用於去重）
         let duplicateCount = 0;  // 重複封包計數
+        
+        // 自動響應模式相關變數
+        let autoResponseEnabled = false;  // 自動響應模式開關
+        let deviceState = {  // 模擬設備的當前狀態
+            power: 1,           // 電源: 0=關機, 1=開機
+            mode: 0,            // 模式: 0=冷氣, 1=除濕, 2=送風, 3=自動, 4=暖氣
+            fanSpeed: 0,        // 風速: 0=自動, 1=靜音, 2=低速, 3=中速, 4=高速
+            targetTemp: 24,     // 設定溫度
+            indoorTemp: 26,     // 室內溫度
+            outdoorTemp: 30,    // 室外溫度
+            humidity: 60,       // 室內濕度
+            swing: 1            // 垂直擺風: 0=關閉, 1=開啟
+        };
 
         // 檢查瀏覽器支援
         function checkSerialSupport() {
@@ -3259,7 +3288,22 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
         function displayReceivedPacket(packet) {
             const hexString = packet.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
             
-            // 檢查是否與上一個封包相同（去重）
+            // ⚡ 自動響應處理（必須在去重之前執行，以支持輪詢查詢）
+            if (autoResponseEnabled) {
+                const saId = packet[1];
+                const commandByte = packet[2];
+                
+                // 判斷是廣播命令還是設備命令
+                if (saId === 0x00) {
+                    // 廣播命令
+                    handleBroadcastQuery(packet);
+                } else {
+                    // 設備控制命令
+                    handleControlCommand(packet);
+                }
+            }
+            
+            // 檢查是否與上一個封包相同（去重 - 僅用於顯示）
             if (lastReceivedPacket) {
                 let isDuplicate = true;
                 if (lastReceivedPacket.length !== packet.length) {
@@ -3275,7 +3319,8 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
                 
                 if (isDuplicate) {
                     duplicateCount++;
-                    // 如果是重複封包，不顯示，只更新計數
+                    // 如果是重複封包，不顯示日志，只更新計數
+                    // 但自動響應已經在上面執行過了
                     return;
                 }
             }
@@ -3492,6 +3537,196 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
         }
 
         // 清空串口監視器
+        // ==================== 自動響應模式功能 ====================
+        
+        // 切換自動響應模式
+        function toggleAutoResponseMode() {
+            autoResponseEnabled = document.getElementById('autoResponseMode').checked;
+            
+            if (autoResponseEnabled) {
+                // 從UI同步當前狀態到設備狀態
+                syncUIToDeviceState();
+                addSerialLog('🤖 自動響應模式: 已啟用', 'info');
+                addSerialLog('   ➜ 設備將自動響應控制命令並更新狀態', 'info');
+                addSerialLog('   ➜ UI變更將自動發送廣播包', 'info');
+            } else {
+                addSerialLog('🤖 自動響應模式: 已停用', 'info');
+            }
+        }
+        
+        // 設置UI變化監聽器（在頁面加載時調用）
+        function setupAutoResponseUIListeners() {
+            const uiFields = [
+                'simPower',
+                'simMode', 
+                'simFan',
+                'simTargetTemp',
+                'simIndoorTemp',
+                'simOutdoorTemp',
+                'simHumidity',
+                'simSwing'
+            ];
+            
+            uiFields.forEach(fieldId => {
+                const element = document.getElementById(fieldId);
+                if (element) {
+                    element.addEventListener('change', onUIFieldChange);
+                }
+            });
+        }
+        
+        // UI字段變化時的處理函數
+        async function onUIFieldChange(event) {
+            // 只在自動響應模式啟用且串口已連接時才自動發送
+            if (!autoResponseEnabled || !serialPort || !serialPort.writable) {
+                return;
+            }
+            
+            const fieldId = event.target.id;
+            const newValue = event.target.value;
+            
+            // 字段名稱映射
+            const fieldNames = {
+                'simPower': '電源',
+                'simMode': '模式',
+                'simFan': '風速',
+                'simTargetTemp': '設定溫度',
+                'simIndoorTemp': '室內溫度',
+                'simOutdoorTemp': '室外溫度',
+                'simHumidity': '室內濕度',
+                'simSwing': '垂直擺風'
+            };
+            
+            // 同步UI到設備狀態
+            syncUIToDeviceState();
+            
+            // 記錄UI變更
+            const fieldName = fieldNames[fieldId] || fieldId;
+            addSerialLog(`🔧 UI變更: ${fieldName} → ${newValue}`, 'info');
+            
+            // 自動生成並發送廣播響應
+            generateBroadcastResponse();
+            await sendBroadcastResponse();
+            
+            addSerialLog('   ➜ 已自動發送廣播包通知控制器', 'info');
+        }
+        
+        // 從UI同步狀態到設備狀態對象
+        function syncUIToDeviceState() {
+            deviceState.power = parseInt(document.getElementById('simPower').value);
+            deviceState.mode = parseInt(document.getElementById('simMode').value);
+            deviceState.fanSpeed = parseInt(document.getElementById('simFan').value);
+            deviceState.targetTemp = parseInt(document.getElementById('simTargetTemp').value);
+            deviceState.indoorTemp = parseInt(document.getElementById('simIndoorTemp').value);
+            deviceState.outdoorTemp = parseInt(document.getElementById('simOutdoorTemp').value);
+            deviceState.humidity = parseInt(document.getElementById('simHumidity').value);
+            deviceState.swing = parseInt(document.getElementById('simSwing').value);
+        }
+        
+        // 從設備狀態同步到UI
+        function syncDeviceStateToUI() {
+            document.getElementById('simPower').value = deviceState.power;
+            document.getElementById('simMode').value = deviceState.mode;
+            document.getElementById('simFan').value = deviceState.fanSpeed;
+            document.getElementById('simTargetTemp').value = deviceState.targetTemp;
+            document.getElementById('simIndoorTemp').value = deviceState.indoorTemp;
+            document.getElementById('simOutdoorTemp').value = deviceState.outdoorTemp;
+            document.getElementById('simHumidity').value = deviceState.humidity;
+            document.getElementById('simSwing').value = deviceState.swing;
+        }
+        
+        // 處理接收到的控制命令（自動響應模式）
+        async function handleControlCommand(packet) {
+            if (!autoResponseEnabled || !serialPort || !serialPort.writable) {
+                return;
+            }
+            
+            const saId = packet[1];
+            const serviceIdByte = packet[2];
+            const isWrite = (serviceIdByte & 0x80) !== 0;
+            const serviceId = serviceIdByte & 0x7F;
+            
+            // 只處理寫入命令
+            if (!isWrite || packet.length !== 6) {
+                return;
+            }
+            
+            const dataValue = (packet[3] << 8) | packet[4];
+            const dataLow = packet[4];
+            
+            // 服務ID映射（擴展支持更多服務）
+            const serviceMap = {
+                0x00: { key: 'power', name: '電源' },
+                0x01: { key: 'mode', name: '模式' },
+                0x02: { key: 'fanSpeed', name: '風速' },
+                0x03: { key: 'targetTemp', name: '設定溫度' },
+                0x04: { key: 'indoorTemp', name: '室內溫度' },
+                0x0E: { key: 'swing', name: '垂直擺風' },
+                0x14: { key: 'humidity', name: '室內濕度' },
+                0x21: { key: 'outdoorTemp', name: '室外溫度' }
+            };
+            
+            const service = serviceMap[serviceId];
+            
+            if (service) {
+                // 更新設備狀態
+                const oldValue = deviceState[service.key];
+                
+                // 根據不同的服務使用不同的數據
+                if (serviceId === 0x04 || serviceId === 0x03 || serviceId === 0x21 || serviceId === 0x14) {
+                    // 溫度和濕度使用完整數值
+                    deviceState[service.key] = dataValue;
+                } else {
+                    // 其他服務使用低位元組
+                    deviceState[service.key] = dataLow;
+                }
+                
+                // 同步到UI
+                syncDeviceStateToUI();
+                
+                // 記錄狀態變化
+                const newValue = deviceState[service.key];
+                addSerialLog(`🔄 狀態更新: ${service.name} ${oldValue} → ${newValue}`, 'info');
+                
+                // 發送確認響應（寫入命令的確認就是原樣返回）
+                try {
+                    const writer = serialPort.writable.getWriter();
+                    await writer.write(new Uint8Array(packet));
+                    writer.releaseLock();
+                    
+                    const hexString = packet.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
+                    const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+                    addSerialLog(`📤 [${timestamp}] TX: ${hexString}`, 'send');
+                    addSerialLog(`   ➜ 確認: ${service.name}已更新`, 'info');
+                } catch (error) {
+                    console.error('自動響應發送失敗:', error);
+                }
+            }
+        }
+        
+        // 處理廣播查詢命令（自動響應模式）
+        async function handleBroadcastQuery(packet) {
+            if (!autoResponseEnabled || !serialPort || !serialPort.writable) {
+                return;
+            }
+            
+            const commandByte = packet[2];
+            
+            // 只處理廣播查詢命令 (0x08)
+            if (commandByte !== 0x08) {
+                return;
+            }
+            
+            // 等待一小段時間再響應（模擬真實設備的響應延遲）
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+            // 生成並發送廣播響應
+            generateBroadcastResponse();
+            await sendBroadcastResponse();
+            
+            addSerialLog('   ➜ 自動發送廣播響應', 'info');
+        }
+        
         function clearSerialMonitor() {
             document.getElementById('serialMonitor').innerHTML = '等待數據...';
             document.getElementById('serialParseResult').innerHTML = '';
@@ -3574,19 +3809,34 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
         
         // 生成廣播回應封包
         function generateBroadcastResponse() {
-            const power = parseInt(document.getElementById('simPower').value);
-            const mode = parseInt(document.getElementById('simMode').value);
-            const fan = parseInt(document.getElementById('simFan').value);
+            // 優先從 deviceState 讀取（自動響應模式），否則從 UI 讀取
+            let power, mode, fan, targetTemp, indoorTemp, outdoorTemp, humidity, swing;
             
-            let targetTemp = parseInt(document.getElementById('simTargetTemp').value);
-            if (isNaN(targetTemp) || document.getElementById('simTargetTemp').value === '') {
-                targetTemp = 0xFFFF; // AUTO模式
+            if (autoResponseEnabled) {
+                // 自動響應模式：從設備狀態讀取
+                power = deviceState.power;
+                mode = deviceState.mode;
+                fan = deviceState.fanSpeed;
+                targetTemp = deviceState.targetTemp;
+                indoorTemp = deviceState.indoorTemp;
+                outdoorTemp = deviceState.outdoorTemp;
+                humidity = deviceState.humidity;
+                swing = deviceState.swing;
+            } else {
+                // 手動模式：從 UI 讀取
+                power = parseInt(document.getElementById('simPower').value);
+                mode = parseInt(document.getElementById('simMode').value);
+                fan = parseInt(document.getElementById('simFan').value);
+                targetTemp = parseInt(document.getElementById('simTargetTemp').value);
+                if (isNaN(targetTemp) || document.getElementById('simTargetTemp').value === '') {
+                    targetTemp = 0xFFFF; // AUTO模式
+                }
+                indoorTemp = parseInt(document.getElementById('simIndoorTemp').value);
+                outdoorTemp = parseInt(document.getElementById('simOutdoorTemp').value);
+                humidity = parseInt(document.getElementById('simHumidity').value);
+                swing = parseInt(document.getElementById('simSwing').value);
             }
             
-            const indoorTemp = parseInt(document.getElementById('simIndoorTemp').value);
-            const outdoorTemp = parseInt(document.getElementById('simOutdoorTemp').value);
-            const humidity = parseInt(document.getElementById('simHumidity').value);
-            const swing = parseInt(document.getElementById('simSwing').value);
             const runtime = parseInt(document.getElementById('simRuntime').value);
             const filter = parseInt(document.getElementById('simFilter').value);
             const energy = parseInt(document.getElementById('simEnergy').value);
@@ -3833,17 +4083,43 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
                 const hexString = bytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
                 const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
                 
-                // 正確解析服務數據
-                // 服務 0x00 (電源): bytes[3]=ID, bytes[4]=高位, bytes[5]=低位
-                // 服務 0x01 (模式): bytes[6]=ID, bytes[7]=高位, bytes[8]=低位
-                const modeNames = ['冷氣', '除濕', '送風', '自動', '暖氣'];
-                const power = bytes[4] << 8 | bytes[5];  // 修正: 取數據部分而非服務ID
-                const mode = bytes[7] << 8 | bytes[8];   // 修正: 取數據部分而非服務ID
-                const temp = bytes[10] << 8 | bytes[11]; // 服務 0x03 的溫度數據
+                // 動態查找服務數據的函數
+                function findServiceValue(bytes, serviceId) {
+                    for (let i = 3; i < bytes.length - 1; i += 3) {
+                        if (bytes[i] === serviceId) {
+                            return (bytes[i + 1] << 8) | bytes[i + 2];
+                        }
+                    }
+                    return null;
+                }
                 
+                // 解析各個服務數據
+                const power = findServiceValue(bytes, 0x00);      // 電源
+                const mode = findServiceValue(bytes, 0x01);       // 模式
+                const fanSpeed = findServiceValue(bytes, 0x02);   // 風速
+                const setTemp = findServiceValue(bytes, 0x03);    // 設定溫度
+                const roomTemp = findServiceValue(bytes, 0x04);   // 室內溫度 (修正為0x04)
+                
+                // 名稱映射
+                const modeNames = ['冷氣', '除濕', '送風', '自動', '暖氣'];
+                const fanNames = ['自動', '低速', '中速', '高速', '超高速'];
+                
+                // 組合狀態文字
                 let statusText = `${power ? '開機' : '關機'} | ${modeNames[mode] || '未知'}`;
-                if (temp && temp !== 0xFFFF) {
-                    statusText += ` | ${temp}°C`;
+                
+                // 添加設定溫度
+                if (setTemp !== null && setTemp !== 0xFFFF) {
+                    statusText += ` | 設定${setTemp}°C`;
+                }
+                
+                // 添加風速
+                if (fanSpeed !== null && fanSpeed !== 0xFFFF) {
+                    statusText += ` | ${fanNames[fanSpeed] || `風速${fanSpeed}`}`;
+                }
+                
+                // 添加室內溫度
+                if (roomTemp !== null && roomTemp !== 0xFFFF && roomTemp !== 0) {
+                    statusText += ` | 室溫${roomTemp}°C`;
                 }
                 
                 addSerialLog(`📤 [${timestamp}] TX: ${hexString}`, 'send');
@@ -4248,6 +4524,7 @@ checksum = 0x06 ^ 0x01 ^ 0x00 ^ 0xFF ^ 0xFF = 0xFA
             updateServiceOptions();
             displayServices();
             updatePacketBytesInfo();  // 初始化封包長度資訊
+            setupAutoResponseUIListeners();  // 初始化自動響應UI監聽器
             
             // 允許 Enter 鍵觸發操作
             document.getElementById('packetInput').addEventListener('keypress', function(e) {
