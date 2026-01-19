@@ -9,6 +9,13 @@
 
 這是我在開發空調模塊過程中製作的輔助工具，用於 TaiSEIA 101 協定的封包生成、解析與測試。現階段模塊開發已告一段落，特此分享給同樣需要進行空調通訊協定開發的朋友們使用。
 
+### 🙏 特別感謝
+
+在此非常感謝洋蔥大以及 Simon 大的 GitHub 相關文件，為本專案提供了重要的參考資料：
+
+- **[tsunglung/taixia](https://github.com/tsunglung/taixia)** - TaiXia [TaiSEIA ® for ESPHome]
+- **[xangin/TaiSEIA_ESPhome_samples](https://github.com/xangin/TaiSEIA_ESPhome_samples)** - Use TaiSEIA ESPhome in ESP32
+
 ## 🚀 快速開始
 
 **直接使用線上版本，無需安裝：**
