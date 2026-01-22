@@ -5,6 +5,11 @@
 
 > 專為空調通訊協定開發設計的網頁版封包分析工具
 
+## 🚀 快速開始
+
+**直接使用線上版本，無需安裝：**
+
+👉 [點擊這裡開啟 TaiSEIA 封包工具](https://shihkefa.github.io/taiseia_packet_tool_v2_serial/)
 ## 📖 專案簡介
 
 這是我在開發空調模塊過程中製作的輔助工具，用於 TaiSEIA 101 協定的封包生成、解析與測試。現階段模塊開發已告一段落，特此分享給同樣需要進行空調通訊協定開發的朋友們使用。
@@ -16,11 +21,7 @@
 - **[tsunglung/taixia](https://github.com/tsunglung/taixia)** - TaiXia [TaiSEIA ® for ESPHome]
 - **[xangin/TaiSEIA_ESPhome_samples](https://github.com/xangin/TaiSEIA_ESPhome_samples)** - Use TaiSEIA ESPhome in ESP32
 
-## 🚀 快速開始
 
-**直接使用線上版本，無需安裝：**
-
-👉 [點擊這裡開啟 TaiSEIA 封包工具](https://shihkefa.github.io/taiseia_packet_tool_v2_serial/)
 
 ## ✨ 主要功能
 
